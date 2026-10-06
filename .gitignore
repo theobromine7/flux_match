@@ -1,0 +1,5 @@
+/build/
+/fluxmatch_cpu.etl
+/fluxmatch_cpu.etl.NGENPDB/
+/.vs/
+/.vscode/
