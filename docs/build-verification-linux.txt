@@ -1,0 +1,31 @@
+FluxMatch Linux build verification (CI)
+=======================================
+
+Runner: GitHub Actions, ubuntu-latest
+Workflow: .github/workflows/cpp.yml
+Commit: 6eb426f
+Run: https://github.com/theobromine7/flux_match/actions/runs/40279576635
+
+Why CI rather than local WSL/container:
+- This machine has only the docker-desktop WSL distro and ~3.7 GiB free disk.
+- A clean runner has no pre-installed Boost/OpenSSL and no cached build, so a
+  green run proves the repository and its instructions are sufficient.
+
+Exact workflow steps:
+
+  1. Set up job                         success
+  2. actions/checkout@v4                success
+  3. Install dependencies               success
+       sudo apt-get update
+       sudo apt-get install -y build-essential cmake libboost-all-dev libssl-dev
+  4. Configure                          success
+       cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+  5. Build                              success
+       cmake --build build --parallel
+  6. Test                               success
+       ctest --test-dir build --output-on-failure
+
+Job conclusion: success
+
+This satisfies Phase 0.4 and the first part of Phase 9.1 (C++ CI).
+Windows verification remains in docs/build-verification-windows.txt.

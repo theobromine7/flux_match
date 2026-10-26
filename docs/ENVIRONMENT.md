@@ -55,7 +55,7 @@ clone resolves the newest port versions and can break without a code change.
 | --- | --- | --- |
 | Windows Release | Passing | `build/windows-release`, `ctest` 1/1 |
 | Windows Debug | Not yet re-run after the portability change | — |
-| Linux | Pending first CI run | `.github/workflows/cpp.yml` |
+| Linux | Passing | CI run [`40279576635`](https://github.com/theobromine7/flux_match/actions/runs/40279576635) |
 | Linux local/WSL | Not available | Only the `docker-desktop` WSL distro is installed |
 
 ## Known limitations

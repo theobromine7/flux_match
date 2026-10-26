@@ -11,12 +11,14 @@ Status on 2026-10-26:
 | 0.1 Build/test/run docs | Done (`docs/BUILD.md`) |
 | 0.2 Separate targets | Done (core library + 3 executables; bench comes in Phase 1) |
 | 0.3 Debug/release presets | Done (`CMakePresets.json`) |
-| 0.4 Linux/WSL verification | CI job added; green run still required |
+| 0.4 Linux/WSL verification | Done (green CI run `40279576635`) |
 | 0.5 Environment record | Done (`docs/ENVIRONMENT.md`) |
 
 The exit gate is: *a fresh checkout builds and tests on Windows and Linux/WSL
-using only the docs.* Windows is proven. Linux is proven as soon as the first
-CI run is green.
+using only the docs.* Both are proven: Windows locally from the presets, Linux
+on a clean `ubuntu-latest` runner.
+
+CI run: https://github.com/theobromine7/flux_match/actions/runs/40279576635
 
 ## What changed
 
@@ -142,8 +144,18 @@ cmake --build --preset windows-release -> fluxmatch_core.lib, demo, marketdata, 
 ctest --preset windows-release        -> 1/1 passed
 ```
 
-Linux: `workflow_dispatch`/push run of `cpp` workflow — pending. This is the
-only remaining Phase 0 checkbox.
+Linux, clean `ubuntu-latest` runner (run
+[`40279576635`](https://github.com/theobromine7/flux_match/actions/runs/40279576635)):
+
+```text
+job: Linux build and tests          -> success
+  Install dependencies              -> success
+  Configure                         -> success
+  Build                             -> success
+  Test                              -> success
+```
+
+All Phase 0 checkboxes are now satisfied.
 
 ## Review questions (you should be able to answer these)
 
