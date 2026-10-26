@@ -2,9 +2,9 @@
 
 #include <vector>
 
-#include "OrderBook.hpp"
-#include "Order.hpp"
-#include "Trade.hpp"
+#include <fluxmatch/Order.hpp>
+#include <fluxmatch/OrderBook.hpp>
+#include <fluxmatch/Trade.hpp>
 
 class MatchingEngine
 {

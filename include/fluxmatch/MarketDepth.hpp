@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include "MarketData.hpp"
+#include <fluxmatch/MarketData.hpp>
 #include <map>
 
 namespace fluxmatch

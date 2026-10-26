@@ -2,7 +2,7 @@
 #include <deque>
 #include <vector>
 #include <optional>
-#include "Order.hpp"
+#include <fluxmatch/Order.hpp>
 
 class OrderBook
 {

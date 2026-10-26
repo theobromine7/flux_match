@@ -1,4 +1,4 @@
-#include "MarketDepth.hpp"
+#include <fluxmatch/MarketDepth.hpp>
 #include <iostream>
 
 namespace fluxmatch

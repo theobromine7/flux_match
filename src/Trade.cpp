@@ -1,4 +1,4 @@
-#include "Trade.hpp"
+#include <fluxmatch/Trade.hpp>
 
 long long Trade::getBuyOrderId() const
 {

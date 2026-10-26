@@ -1,8 +1,8 @@
 #pragma once
 
-#include "Side.hpp"
-#include "OrderType.hpp"
-#include "OrderState.hpp"
+#include <fluxmatch/OrderState.hpp>
+#include <fluxmatch/OrderType.hpp>
+#include <fluxmatch/Side.hpp>
 
 class Order
 {

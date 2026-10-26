@@ -1,4 +1,4 @@
-#include "MatchingEngine.hpp"
+#include <fluxmatch/MatchingEngine.hpp>
 #include <iostream>
 #include <limits>
 #include <random>

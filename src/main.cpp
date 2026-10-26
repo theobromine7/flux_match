@@ -1,12 +1,30 @@
 #include <iostream>
 #include <chrono>
 #include <algorithm>
-#include "MatchingEngine.hpp"
+#include <fluxmatch/MatchingEngine.hpp>
+
+// Temporary portability shim. MSVC exposes __rdtscp through <intrin.h>,
+// while GCC/Clang expose it through <x86intrin.h>. Phase 1 moves the
+// benchmark out of this file; Phase 1.8 replaces this with a real timer.
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
 #include <intrin.h>
+#define FLUXMATCH_HAS_RDTSCP 1
+#elif (defined(__GNUC__) || defined(__clang__)) && \
+    (defined(__x86_64__) || defined(__i386__))
+#include <x86intrin.h>
+#define FLUXMATCH_HAS_RDTSCP 1
+#endif
+
 unsigned long long readTSC()
 {
+#ifdef FLUXMATCH_HAS_RDTSCP
     unsigned int aux;
     return __rdtscp(&aux);
+#else
+    // Non-x86 fallback: monotonic clock ticks, not CPU cycles.
+    return static_cast<unsigned long long>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+#endif
 }
 int main()
 {
