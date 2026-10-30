@@ -28,6 +28,14 @@ target_link_libraries(fluxmatch_demo PRIVATE
     fluxmatch_core
 )
 
+add_executable(fluxmatch_bench
+    benchmarks/bench_main.cpp
+)
+
+target_link_libraries(fluxmatch_bench PRIVATE
+    fluxmatch_core
+)
+
 option(FLUXMATCH_BUILD_MARKET_DATA "Build the market-data client" ON)
 
 if(FLUXMATCH_BUILD_MARKET_DATA)

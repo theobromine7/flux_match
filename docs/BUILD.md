@@ -57,11 +57,25 @@ preset; `CMAKE_BUILD_TYPE` is not used. Executables are under
 `build\windows-release\Release\` (or `build\windows-debug\Debug\`):
 
 - `fluxmatch_demo.exe`
+- `fluxmatch_bench.exe`
 - `fluxmatch_marketdata.exe`
 - `fluxmatch_tests.exe`
 
 CTest runs `fluxmatch_tests`; `ctest --preset windows-release` shows failures
 and their output.
+
+### Running the demo and benchmark
+
+```powershell
+.\build\windows-release\Release\fluxmatch_demo.exe
+.\build\windows-release\Release\fluxmatch_bench.exe
+```
+
+`fluxmatch_demo` is a small deterministic matching example. `fluxmatch_bench`
+is the development benchmark; its output is not a production latency claim. The
+current workload and measurement method are intentionally unchanged from the
+original implementation so later changes can be compared against a known
+baseline. See `docs/PHASE1.md`.
 
 ### Troubleshooting
 
