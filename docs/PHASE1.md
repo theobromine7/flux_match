@@ -239,18 +239,54 @@ going until the numbers settle, not until the clock says one second.
 Files: `docs/experiments/005-warmup.txt`,
 record `004-warmup.md`.
 
-## Next: Phase 1.5 — metadata and machine-readable output
+## Phase 1.5 — metadata and JSON output (done)
 
-Every result should carry the facts needed to interpret it:
+A timing number without context cannot be reproduced or trusted. Every run now
+prints a `[metadata]` block and can write the same facts as JSON:
 
-- workload, commands, seed, mode, warm-up seconds,
-- build type and compiler, C++ flags,
-- CPU and OS,
-- date/time and duration.
+```powershell
+.\build\windows-release\Release\fluxmatch_bench.exe `
+  --workload mixed --commands 200000 --seed 42 --mode both `
+  --warmup 1.0 --json benchmarks\results\005-metadata.json
+```
 
-Then write the same result as JSON (and later CSV) under
-`benchmarks/results/`, which is gitignored. Phase 1.6 adds repeated runs and a
-min/median/stddev summary across runs.
+Captured fields:
+
+| Group | Fields |
+| --- | --- |
+| Source | git short commit (recorded at configure time) |
+| Build | configuration, compiler id and version, C++ standard, system, processor |
+| Machine | CPU brand, logical cores, host name, OS |
+| Workload | name, command count, seed, stream hash |
+| Config | mode, warm-up seconds, timer unit |
+| Results | warm-up passes, throughput, latency percentiles, timer floor |
+
+The **stream hash** is the important reproducibility field: if two runs print the
+same hash, they consumed the exact same command sequence. The timings will still
+differ, because the machine is noisy; the metadata lets you prove that the code,
+build, setup, and input were the same before comparing distributions.
+
+### What "reproducible" means here
+
+- **Same input:** guaranteed. Same workload + count + seed → same stream hash.
+- **Same code and build:** provable. The commit, compiler, and configuration are
+  in the result.
+- **Same timing:** not exactly. Two runs on the same machine differ by more than
+  the clock's resolution. The goal is a stable *distribution*, not an identical
+  integer.
+
+That last point is why Phase 1.6 runs the benchmark repeatedly and reports
+min/median/spread instead of a single number.
+
+Files: `docs/experiments/006-metadata.txt`; JSON lives under the gitignored
+`benchmarks/results/`.
+
+## Next: Phase 1.6 — repeated runs
+
+Run the same configuration N times, then report min, median, and spread for
+throughput and latency. A single number hides the noise we have already seen;
+the spread is the honest measurement.
+
 
 
 

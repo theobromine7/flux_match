@@ -81,7 +81,12 @@ check.
 `--mode throughput` times the whole stream, `--mode latency` times each command
 (engine-only and end-to-end), and `--mode both` does both against a fresh
 engine. `--warmup <seconds>` (default 1.0) runs discarded warm-up passes first.
-Results are still single-run; see `docs/PHASE1.md`.
+
+`--json <path>` writes the same result as JSON, including the source commit,
+compiler, build type, CPU, OS, workload seed, and stream hash. The directory is
+created if needed. `benchmarks/results/` is gitignored; keep reruns out of the
+repository and copy only the results worth discussing. Results are still
+single-run; see `docs/PHASE1.md`.
 
 ### Troubleshooting
 

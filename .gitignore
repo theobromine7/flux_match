@@ -1,4 +1,5 @@
 /build*/
+/benchmarks/results/
 /fluxmatch_cpu.etl
 /fluxmatch_cpu.etl.NGENPDB/
 /.vs/

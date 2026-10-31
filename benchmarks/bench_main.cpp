@@ -1,15 +1,27 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
+#include <ctime>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <fluxmatch/MatchingEngine.hpp>
 
 #include "workloads.hpp"
+
+#if !defined(_WIN32)
+#include <sys/utsname.h>
+#include <unistd.h>
+#endif
 
 // Temporary portability shim. Phase 1.8 replaces this with a documented
 // timer module and measures its overhead in detail.
@@ -20,6 +32,28 @@
     (defined(__x86_64__) || defined(__i386__))
 #include <x86intrin.h>
 #define FLUXMATCH_HAS_RDTSCP 1
+#endif
+
+#ifndef FLUXMATCH_GIT_COMMIT
+#define FLUXMATCH_GIT_COMMIT "unknown"
+#endif
+#ifndef FLUXMATCH_COMPILER_ID
+#define FLUXMATCH_COMPILER_ID "unknown"
+#endif
+#ifndef FLUXMATCH_COMPILER_VERSION
+#define FLUXMATCH_COMPILER_VERSION "unknown"
+#endif
+#ifndef FLUXMATCH_CXX_STANDARD
+#define FLUXMATCH_CXX_STANDARD "unknown"
+#endif
+#ifndef FLUXMATCH_SYSTEM_NAME
+#define FLUXMATCH_SYSTEM_NAME "unknown"
+#endif
+#ifndef FLUXMATCH_SYSTEM_PROCESSOR
+#define FLUXMATCH_SYSTEM_PROCESSOR "unknown"
+#endif
+#ifndef FLUXMATCH_BUILD_CONFIG
+#define FLUXMATCH_BUILD_CONFIG "unknown"
 #endif
 
 namespace
@@ -42,6 +76,126 @@ unsigned long long readTSC()
 #endif
 }
 
+std::string environmentValue(const char *name)
+{
+    const char *value = std::getenv(name);
+    return value ? std::string(value) : std::string();
+}
+
+std::string utcTimestamp()
+{
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t time = std::chrono::system_clock::to_time_t(now);
+
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &time);
+#else
+    gmtime_r(&time, &tm);
+#endif
+
+    char buffer[32]{};
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return buffer;
+}
+
+std::string cpuBrand()
+{
+#ifdef _WIN32
+    const std::string identifier = environmentValue("PROCESSOR_IDENTIFIER");
+    return identifier.empty() ? "unknown" : identifier;
+#else
+    std::ifstream info("/proc/cpuinfo");
+    std::string line;
+    while (std::getline(info, line))
+    {
+        if (line.rfind("model name", 0) != 0)
+            continue;
+        const auto colon = line.find(':');
+        if (colon == std::string::npos)
+            continue;
+        std::string value = line.substr(colon + 1);
+        const auto first = value.find_first_not_of(" \t");
+        return first == std::string::npos ? "unknown" : value.substr(first);
+    }
+    return "unknown";
+#endif
+}
+
+std::string hostName()
+{
+#ifdef _WIN32
+    const std::string name = environmentValue("COMPUTERNAME");
+    return name.empty() ? "unknown" : name;
+#else
+    char buffer[256]{};
+    return gethostname(buffer, sizeof(buffer)) == 0 ? std::string(buffer)
+                                                    : std::string("unknown");
+#endif
+}
+
+std::string osName()
+{
+#ifdef _WIN32
+    return "Windows";
+#else
+    struct utsname info
+    {
+    };
+    if (uname(&info) == 0)
+        return std::string(info.sysname) + " " + info.release;
+    return "unknown";
+#endif
+}
+
+struct RunMetadata
+{
+    std::string generatedAt = utcTimestamp();
+    std::string gitCommit = FLUXMATCH_GIT_COMMIT;
+    std::string compilerId = FLUXMATCH_COMPILER_ID;
+    std::string compilerVersion = FLUXMATCH_COMPILER_VERSION;
+    std::string cxxStandard = FLUXMATCH_CXX_STANDARD;
+    std::string buildConfig = FLUXMATCH_BUILD_CONFIG;
+    std::string systemName = FLUXMATCH_SYSTEM_NAME;
+    std::string systemProcessor = FLUXMATCH_SYSTEM_PROCESSOR;
+    std::string cpu = cpuBrand();
+    std::string host = hostName();
+    std::string os = osName();
+    unsigned logicalCores = std::thread::hardware_concurrency();
+};
+
+struct Stats
+{
+    unsigned long long p50 = 0;
+    unsigned long long p95 = 0;
+    unsigned long long p99 = 0;
+    unsigned long long max = 0;
+};
+
+Stats computeStats(std::vector<unsigned long long> &values)
+{
+    Stats stats;
+    if (values.empty())
+        return stats;
+
+    std::sort(values.begin(), values.end());
+    const std::size_t n = values.size();
+    stats.p50 = values[n / 2];
+    stats.p95 = values[n * 95 / 100];
+    stats.p99 = values[n * 99 / 100];
+    stats.max = values[n - 1];
+    return stats;
+}
+
+void printStats(const char *label, const Stats &stats)
+{
+    std::cout << "  " << label << ":\n";
+    std::cout << "    P50: " << stats.p50 << ' ' << kTimerUnit << '\n';
+    std::cout << "    P95: " << stats.p95 << ' ' << kTimerUnit << '\n';
+    std::cout << "    P99: " << stats.p99 << ' ' << kTimerUnit << '\n';
+    std::cout << "    Max: " << stats.max << ' ' << kTimerUnit << '\n';
+}
+
 enum class Mode
 {
     Throughput,
@@ -57,6 +211,7 @@ struct Options
     std::uint64_t seed = 42;
     Mode mode = Mode::Both;
     double warmupSeconds = 1.0;
+    std::string jsonPath;
     bool help = false;
 };
 
@@ -70,6 +225,7 @@ void printUsage(const char *program)
         << "  --seed <n>          RNG seed (default: 42)\n"
         << "  --mode <mode>       throughput, latency, or both (default: both)\n"
         << "  --warmup <seconds>  minimum warm-up duration, 0 disables (default: 1.0)\n"
+        << "  --json <path>       also write a machine-readable result file\n"
         << "  --help              show this message\n";
 }
 
@@ -145,6 +301,10 @@ std::optional<Options> parseOptions(int argc, char **argv)
                     return std::nullopt;
                 }
             }
+            else if (arg == "--json")
+            {
+                options.jsonPath = value;
+            }
             else
             {
                 std::cerr << "Unknown option: " << arg << '\n';
@@ -161,8 +321,13 @@ std::optional<Options> parseOptions(int argc, char **argv)
     return options;
 }
 
-// Throughput: one clock reading around the whole stream. No per-command timer,
-// so this number includes almost no measurement overhead.
+struct ThroughputResult
+{
+    double seconds = 0.0;
+    double commandsPerSecond = 0.0;
+    std::size_t trades = 0;
+};
+
 double runThroughput(const std::vector<fluxmatch::bench::Command> &commands,
                      std::size_t &trades)
 {
@@ -191,9 +356,6 @@ double runThroughput(const std::vector<fluxmatch::bench::Command> &commands,
     return static_cast<double>(ns) / 1e9;
 }
 
-// Warm-up runs the stream repeatedly on throwaway engines. It stops when the
-// minimum duration has passed AND the last three pass throughputs are within
-// 5% of each other, or when a hard safety limit is reached.
 struct WarmUpResult
 {
     std::size_t passes = 0;
@@ -257,11 +419,14 @@ WarmUpResult runWarmUp(const std::vector<fluxmatch::bench::Command> &commands,
     return result;
 }
 
-// Engine-only latency: argument preparation (reading the command, resolving a
-// cancel target) happens before the timer starts.
-std::vector<unsigned long long> runLatencyEngineOnly(
-    const std::vector<fluxmatch::bench::Command> &commands,
-    std::size_t &trades)
+struct LatencyResult
+{
+    std::size_t trades = 0;
+    Stats stats;
+};
+
+LatencyResult runLatencyEngineOnly(
+    const std::vector<fluxmatch::bench::Command> &commands)
 {
     MatchingEngine engine;
     std::vector<long long> orderIds(commands.size(), 0);
@@ -298,15 +463,11 @@ std::vector<unsigned long long> runLatencyEngineOnly(
         }
     }
 
-    trades = engine.getTrades().size();
-    return latencies;
+    return {engine.getTrades().size(), computeStats(latencies)};
 }
 
-// End-to-end latency: the timer includes the command dispatch and cancel-target
-// lookup, so it is closer to what a caller of the engine actually pays.
-std::vector<unsigned long long> runLatencyEndToEnd(
-    const std::vector<fluxmatch::bench::Command> &commands,
-    std::size_t &trades)
+LatencyResult runLatencyEndToEnd(
+    const std::vector<fluxmatch::bench::Command> &commands)
 {
     MatchingEngine engine;
     std::vector<long long> orderIds(commands.size(), 0);
@@ -335,12 +496,10 @@ std::vector<unsigned long long> runLatencyEndToEnd(
         latencies.push_back(end - start);
     }
 
-    trades = engine.getTrades().size();
-    return latencies;
+    return {engine.getTrades().size(), computeStats(latencies)};
 }
 
-// Lower bound on timer cost: two consecutive readings with nothing between.
-std::vector<unsigned long long> measureTimerOverhead(std::size_t samples)
+Stats measureTimerOverhead(std::size_t samples)
 {
     std::vector<unsigned long long> overhead;
     overhead.reserve(samples);
@@ -350,24 +509,197 @@ std::vector<unsigned long long> measureTimerOverhead(std::size_t samples)
         const auto end = readTSC();
         overhead.push_back(end - start);
     }
-    return overhead;
+    return computeStats(overhead);
 }
 
-unsigned long long printStats(const char *label,
-                              std::vector<unsigned long long> &values)
+std::string jsonEscape(const std::string &value)
 {
-    if (values.empty())
-        return 0;
+    std::string out;
+    out.reserve(value.size() + 8);
+    for (const char c : value)
+    {
+        switch (c)
+        {
+        case '"':
+            out += "\\\"";
+            break;
+        case '\\':
+            out += "\\\\";
+            break;
+        case '\n':
+            out += "\\n";
+            break;
+        case '\r':
+            out += "\\r";
+            break;
+        case '\t':
+            out += "\\t";
+            break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20)
+            {
+                std::ostringstream escape;
+                escape << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                       << static_cast<int>(static_cast<unsigned char>(c));
+                out += escape.str();
+            }
+            else
+            {
+                out += c;
+            }
+        }
+    }
+    return out;
+}
 
-    std::sort(values.begin(), values.end());
-    const std::size_t n = values.size();
+std::string jsonString(const std::string &value)
+{
+    return "\"" + jsonEscape(value) + "\"";
+}
 
-    std::cout << "  " << label << ":\n";
-    std::cout << "    P50: " << values[n / 2] << ' ' << kTimerUnit << '\n';
-    std::cout << "    P95: " << values[n * 95 / 100] << ' ' << kTimerUnit << '\n';
-    std::cout << "    P99: " << values[n * 99 / 100] << ' ' << kTimerUnit << '\n';
-    std::cout << "    Max: " << values[n - 1] << ' ' << kTimerUnit << '\n';
-    return values[n / 2];
+std::string statsJson(const Stats &stats)
+{
+    std::ostringstream out;
+    out << "{\"p50\":" << stats.p50
+        << ",\"p95\":" << stats.p95
+        << ",\"p99\":" << stats.p99
+        << ",\"max\":" << stats.max << '}';
+    return out.str();
+}
+
+bool writeJson(const std::string &path,
+               const RunMetadata &meta,
+               const Options &options,
+               std::size_t commands,
+               std::uint64_t streamHash,
+               const WarmUpResult &warmup,
+               const std::optional<ThroughputResult> &throughput,
+               const std::optional<LatencyResult> &engineLatency,
+               const std::optional<LatencyResult> &endToEndLatency,
+               const std::optional<Stats> &timerFloor)
+{
+    const std::filesystem::path target(path);
+    if (target.has_parent_path())
+    {
+        std::error_code error;
+        std::filesystem::create_directories(target.parent_path(), error);
+        if (error)
+        {
+            std::cerr << "Could not create result directory: "
+                      << error.message() << '\n';
+            return false;
+        }
+    }
+
+    std::ofstream out(path);
+    if (!out)
+    {
+        std::cerr << "Could not open result file: " << path << '\n';
+        return false;
+    }
+
+    out << std::setprecision(9);
+
+    out << "{\n";
+    out << "  \"schema\": 1,\n";
+    out << "  \"generated_at\": " << jsonString(meta.generatedAt) << ",\n";
+    out << "  \"git_commit\": " << jsonString(meta.gitCommit) << ",\n";
+
+    out << "  \"build\": {\n";
+    out << "    \"config\": " << jsonString(meta.buildConfig) << ",\n";
+    out << "    \"compiler_id\": " << jsonString(meta.compilerId) << ",\n";
+    out << "    \"compiler_version\": " << jsonString(meta.compilerVersion) << ",\n";
+    out << "    \"cxx_standard\": " << jsonString(meta.cxxStandard) << ",\n";
+    out << "    \"system\": " << jsonString(meta.systemName) << ",\n";
+    out << "    \"processor\": " << jsonString(meta.systemProcessor) << "\n";
+    out << "  },\n";
+
+    out << "  \"machine\": {\n";
+    out << "    \"cpu\": " << jsonString(meta.cpu) << ",\n";
+    out << "    \"logical_cores\": " << meta.logicalCores << ",\n";
+    out << "    \"host\": " << jsonString(meta.host) << ",\n";
+    out << "    \"os\": " << jsonString(meta.os) << "\n";
+    out << "  },\n";
+
+    out << "  \"workload\": {\n";
+    out << "    \"name\": " << jsonString(fluxmatch::bench::toString(options.workload)) << ",\n";
+    out << "    \"commands\": " << commands << ",\n";
+    out << "    \"seed\": " << options.seed << ",\n";
+    out << "    \"stream_hash\": " << jsonString([&]
+                                                    {
+                                                        std::ostringstream hash;
+                                                        hash << std::hex << streamHash;
+                                                        return hash.str();
+                                                    }())
+        << "\n";
+    out << "  },\n";
+
+    out << "  \"config\": {\n";
+    out << "    \"mode\": ";
+    switch (options.mode)
+    {
+    case Mode::Throughput:
+        out << "\"throughput\"";
+        break;
+    case Mode::Latency:
+        out << "\"latency\"";
+        break;
+    case Mode::Both:
+        out << "\"both\"";
+        break;
+    }
+    out << ",\n";
+    out << "    \"warmup_seconds\": " << options.warmupSeconds << ",\n";
+    out << "    \"timer_unit\": " << jsonString(kTimerUnit) << "\n";
+    out << "  },\n";
+
+    out << "  \"warmup\": {\n";
+    out << "    \"enabled\": " << (options.warmupSeconds > 0.0 ? "true" : "false") << ",\n";
+    out << "    \"passes\": " << warmup.passes << ",\n";
+    out << "    \"seconds\": " << warmup.seconds << ",\n";
+    out << "    \"first_commands_per_sec\": " << warmup.firstThroughput << ",\n";
+    out << "    \"last_commands_per_sec\": " << warmup.lastThroughput << ",\n";
+    out << "    \"recent_spread\": " << warmup.recentSpread << ",\n";
+    out << "    \"steady\": " << (warmup.steady ? "true" : "false") << "\n";
+    out << "  },\n";
+
+    out << "  \"throughput\": ";
+    if (throughput)
+    {
+        out << "{\n";
+        out << "    \"seconds\": " << throughput->seconds << ",\n";
+        out << "    \"commands_per_sec\": " << throughput->commandsPerSecond << ",\n";
+        out << "    \"trades\": " << throughput->trades << "\n";
+        out << "  },\n";
+    }
+    else
+    {
+        out << "null,\n";
+    }
+
+    out << "  \"latency\": ";
+    if (engineLatency && endToEndLatency && timerFloor)
+    {
+        out << "{\n";
+        out << "    \"unit\": " << jsonString(kTimerUnit) << ",\n";
+        out << "    \"engine_only\": {\"trades\": " << engineLatency->trades
+            << ", \"stats\": " << statsJson(engineLatency->stats) << "},\n";
+        out << "    \"end_to_end\": {\"trades\": " << endToEndLatency->trades
+            << ", \"stats\": " << statsJson(endToEndLatency->stats) << "},\n";
+        out << "    \"harness_delta_p50\": "
+            << (static_cast<long long>(endToEndLatency->stats.p50) -
+                static_cast<long long>(engineLatency->stats.p50))
+            << ",\n";
+        out << "    \"timer_floor\": " << statsJson(*timerFloor) << "\n";
+        out << "  }\n";
+    }
+    else
+    {
+        out << "null\n";
+    }
+
+    out << "}\n";
+    return true;
 }
 
 } // namespace
@@ -390,75 +722,125 @@ int main(int argc, char **argv)
 
     const auto commands = fluxmatch::bench::generateWorkload(
         options.workload, options.commands, options.seed);
+    const std::uint64_t streamHash = fluxmatch::bench::hashCommands(commands);
+    const RunMetadata metadata;
 
     std::cout << "Workload: " << fluxmatch::bench::toString(options.workload) << '\n';
     std::cout << "Seed: " << options.seed << '\n';
     std::cout << "Commands: " << commands.size() << '\n';
-    std::cout << "Stream hash: " << std::hex
-              << fluxmatch::bench::hashCommands(commands) << std::dec << '\n';
+    std::cout << "Stream hash: " << std::hex << streamHash << std::dec << '\n';
+    std::cout << "Mode: ";
+    switch (options.mode)
+    {
+    case Mode::Throughput:
+        std::cout << "throughput\n";
+        break;
+    case Mode::Latency:
+        std::cout << "latency\n";
+        break;
+    case Mode::Both:
+        std::cout << "both\n";
+        break;
+    }
+
+    std::cout << "\n[metadata]\n";
+    std::cout << "  git commit: " << metadata.gitCommit << '\n';
+    std::cout << "  build: " << metadata.buildConfig << '\n';
+    std::cout << "  compiler: " << metadata.compilerId << ' '
+              << metadata.compilerVersion << '\n';
+    std::cout << "  c++ standard: " << metadata.cxxStandard << '\n';
+    std::cout << "  system: " << metadata.systemName << " / "
+              << metadata.systemProcessor << '\n';
+    std::cout << "  cpu: " << metadata.cpu << '\n';
+    std::cout << "  logical cores: " << metadata.logicalCores << '\n';
+    std::cout << "  host: " << metadata.host << '\n';
+    std::cout << "  os: " << metadata.os << '\n';
+    std::cout << "  time: " << metadata.generatedAt << '\n';
 
     std::cout << "\n[warm-up]\n";
+    const WarmUpResult warmup = runWarmUp(commands, options.warmupSeconds);
     if (options.warmupSeconds > 0.0 && !commands.empty())
     {
-        const auto warm = runWarmUp(commands, options.warmupSeconds);
-        std::cout << "  passes: " << warm.passes << '\n';
-        std::cout << "  time: " << warm.seconds << " s\n";
-        std::cout << "  first pass: " << warm.firstThroughput << " commands/sec\n";
-        std::cout << "  last pass: " << warm.lastThroughput << " commands/sec\n";
-        std::cout << "  last-3 spread: " << warm.recentSpread * 100.0
+        std::cout << "  passes: " << warmup.passes << '\n';
+        std::cout << "  time: " << warmup.seconds << " s\n";
+        std::cout << "  first pass: " << warmup.firstThroughput << " commands/sec\n";
+        std::cout << "  last pass: " << warmup.lastThroughput << " commands/sec\n";
+        std::cout << "  last-3 spread: " << warmup.recentSpread * 100.0
                   << " % (target <= 5 %)\n";
-        std::cout << "  status: " << (warm.steady ? "steady" : "not steady") << '\n';
+        std::cout << "  status: " << (warmup.steady ? "steady" : "not steady") << '\n';
     }
     else
     {
         std::cout << "  disabled\n";
     }
 
+    std::optional<ThroughputResult> throughput;
+    std::optional<LatencyResult> engineLatency;
+    std::optional<LatencyResult> endToEndLatency;
+    std::optional<Stats> timerFloor;
+
     if (options.mode == Mode::Throughput || options.mode == Mode::Both)
     {
         std::size_t trades = 0;
         const double seconds = runThroughput(commands, trades);
 
+        ThroughputResult result;
+        result.seconds = seconds;
+        result.trades = trades;
+        result.commandsPerSecond =
+            seconds > 0.0 ? static_cast<double>(commands.size()) / seconds : 0.0;
+        throughput = result;
+
         std::cout << "\n[throughput]\n";
-        std::cout << "  Time: " << seconds << " s\n";
-        if (seconds > 0.0)
-            std::cout << "  Commands/sec: "
-                      << static_cast<double>(commands.size()) / seconds << '\n';
+        std::cout << "  Time: " << result.seconds << " s\n";
+        if (result.commandsPerSecond > 0.0)
+            std::cout << "  Commands/sec: " << result.commandsPerSecond << '\n';
         else
             std::cout << "  Commands/sec: n/a\n";
-        std::cout << "  Trades: " << trades << '\n';
+        std::cout << "  Trades: " << result.trades << '\n';
     }
 
     if (options.mode == Mode::Latency || options.mode == Mode::Both)
     {
-        std::size_t engineTrades = 0;
-        std::size_t endToEndTrades = 0;
-
-        auto engineLatencies = runLatencyEngineOnly(commands, engineTrades);
-        auto endToEndLatencies = runLatencyEndToEnd(commands, endToEndTrades);
+        engineLatency = runLatencyEngineOnly(commands);
+        endToEndLatency = runLatencyEndToEnd(commands);
+        timerFloor = measureTimerOverhead(100000);
 
         std::cout << "\n[latency: engine only]\n";
-        std::cout << "  Trades: " << engineTrades << '\n';
-        const auto engineMedian = printStats("latency", engineLatencies);
+        std::cout << "  Trades: " << engineLatency->trades << '\n';
+        printStats("latency", engineLatency->stats);
 
         std::cout << "\n[latency: end to end]\n";
-        std::cout << "  Trades: " << endToEndTrades << '\n';
-        const auto endToEndMedian = printStats("latency", endToEndLatencies);
+        std::cout << "  Trades: " << endToEndLatency->trades << '\n';
+        printStats("latency", endToEndLatency->stats);
 
-        auto overhead = measureTimerOverhead(100000);
         std::cout << "\n[timer]\n";
-        const auto overheadMedian = printStats("empty timed region", overhead);
+        printStats("empty timed region", *timerFloor);
 
         std::cout << "\n[harness overhead estimate]\n";
         const long long delta =
-            static_cast<long long>(endToEndMedian) -
-            static_cast<long long>(engineMedian);
+            static_cast<long long>(endToEndLatency->stats.p50) -
+            static_cast<long long>(engineLatency->stats.p50);
         std::cout << "  End-to-end P50 minus engine-only P50: "
                   << delta << ' ' << kTimerUnit << '\n';
         std::cout << "  Timer floor P50 (two back-to-back readings): "
-                  << overheadMedian << ' ' << kTimerUnit << '\n';
+                  << timerFloor->p50 << ' ' << kTimerUnit << '\n';
         std::cout << "  Note: single run. Repeat-run variability is added in\n"
                      "  Phase 1.6.\n";
+    }
+
+    if (!options.jsonPath.empty())
+    {
+        if (writeJson(options.jsonPath, metadata, options, commands.size(),
+                      streamHash, warmup, throughput, engineLatency,
+                      endToEndLatency, timerFloor))
+        {
+            std::cout << "\nWrote JSON result: " << options.jsonPath << '\n';
+        }
+        else
+        {
+            return 3;
+        }
     }
 
     return 0;

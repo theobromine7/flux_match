@@ -48,6 +48,30 @@ target_link_libraries(fluxmatch_bench PRIVATE
     fluxmatch_workloads
 )
 
+# Record the facts needed to interpret a benchmark result: which source
+# revision, which compiler, which build type, and which platform.
+find_package(Git QUIET)
+set(FLUXMATCH_GIT_COMMIT "unknown")
+if(Git_FOUND)
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        OUTPUT_VARIABLE FLUXMATCH_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
+
+target_compile_definitions(fluxmatch_bench PRIVATE
+    FLUXMATCH_GIT_COMMIT="${FLUXMATCH_GIT_COMMIT}"
+    FLUXMATCH_COMPILER_ID="${CMAKE_CXX_COMPILER_ID}"
+    FLUXMATCH_COMPILER_VERSION="${CMAKE_CXX_COMPILER_VERSION}"
+    FLUXMATCH_CXX_STANDARD="${CMAKE_CXX_STANDARD}"
+    FLUXMATCH_SYSTEM_NAME="${CMAKE_SYSTEM_NAME}"
+    FLUXMATCH_SYSTEM_PROCESSOR="${CMAKE_SYSTEM_PROCESSOR}"
+    FLUXMATCH_BUILD_CONFIG="$<CONFIG>"
+)
+
 option(FLUXMATCH_BUILD_MARKET_DATA "Build the market-data client" ON)
 
 if(FLUXMATCH_BUILD_MARKET_DATA)
