@@ -28,12 +28,24 @@ target_link_libraries(fluxmatch_demo PRIVATE
     fluxmatch_core
 )
 
+add_library(fluxmatch_workloads
+    benchmarks/workloads.cpp
+)
+
+target_include_directories(fluxmatch_workloads PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks
+)
+
+target_link_libraries(fluxmatch_workloads PUBLIC
+    fluxmatch_core
+)
+
 add_executable(fluxmatch_bench
     benchmarks/bench_main.cpp
 )
 
 target_link_libraries(fluxmatch_bench PRIVATE
-    fluxmatch_core
+    fluxmatch_workloads
 )
 
 option(FLUXMATCH_BUILD_MARKET_DATA "Build the market-data client" ON)
@@ -70,4 +82,14 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME fluxmatch_tests COMMAND fluxmatch_tests)
+
+    add_executable(fluxmatch_workload_tests
+        tests/WorkloadTests.cpp
+    )
+
+    target_link_libraries(fluxmatch_workload_tests PRIVATE
+        fluxmatch_workloads
+    )
+
+    add_test(NAME fluxmatch_workload_tests COMMAND fluxmatch_workload_tests)
 endif()

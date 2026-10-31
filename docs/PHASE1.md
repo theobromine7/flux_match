@@ -89,16 +89,71 @@ cmake --build --preset windows-release
 On Linux, the CI job builds both; run the binaries from `build/` after the same
 commands.
 
-## Next: Phase 1.2 — workload generators
+## Phase 1.2 — workload generators (done)
 
-Design five fixed-seed workloads:
+The benchmark now takes `--workload`, `--commands`, and `--seed`:
 
-- **resting:** insert orders that never cross,
-- **one-level fill:** each incoming order fills exactly one resting order,
-- **multi-level sweep:** one incoming order consumes several price levels,
-- **cancel:** insert then cancel in a deterministic pattern,
-- **mixed:** a weighted mix of the above.
+```powershell
+.\build\windows-release\Release\fluxmatch_bench.exe --workload mixed --commands 200000 --seed 42
+```
 
-Requirements: same seed produces the same stream, each workload is parameterised
-by size, and the benchmark reports which workload it ran. The current
-1,000,000-sell setup becomes one of these workloads rather than being hardcoded.
+Five generators live in `benchmarks/workloads.{hpp,cpp}`:
+
+| Workload | Shape |
+| --- | --- |
+| `resting` | Non-crossing limits; bids below mid, asks above |
+| `one_level_fill` | Resting sell + matching buy, quantity 1 |
+| `multi_level_sweep` | 10 sells on consecutive prices, then a buy of 10 |
+| `cancel` | Resting submits with periodic cancels of active orders |
+| `mixed` | 50% resting, 20% cancels, 30% market orders |
+
+`std::mt19937_64` plus integer arithmetic (no `uniform_int_distribution`, whose
+implementation is not portable) makes the stream deterministic. The benchmark
+prints a `Stream hash`; the same seed gave `7193c5f7311ff72f` twice across
+separate processes.
+
+### Why functions plus a dispatch table
+
+Three options were considered:
+
+- **Single switch:** one function grows with every workload and generators
+  cannot be tested in isolation.
+- **Polymorphic `IWorkload`:** justified when each workload needs runtime state
+  or its own parameters; unnecessary virtual dispatch for five stateless
+  generators.
+- **Free functions + dispatch table (chosen):** each generator is independently
+  testable, adding one is a function plus a table entry, and the dispatch is
+  trivial.
+
+It should be revisited when workloads gain parameters beyond count and seed.
+That is the point where the common signature stops fitting and an interface or
+a config struct becomes justified.
+
+### Bug found
+
+`Side.hpp` and `OrderType.hpp` had no `#pragma once`. They worked only because
+`Order.hpp` included each once; including them directly from `workloads.hpp`
+produced enum redefinitions. Fixed.
+
+### Results (200,000 commands, seed 42, single run)
+
+| Workload | Commands/sec | P50 | P99 | Trades |
+| --- | --- | --- | --- | --- |
+| resting | 5.10 M | 364 | 970 | 0 |
+| one_level_fill | 7.97 M | 218 | 696 | 100,000 |
+| multi_level_sweep | 4.58 M | 226 | 2,524 | 181,810 |
+| cancel | 4.35 M | 386 | 2,102 | 0 |
+| mixed | 3.37 M | 480 | 2,278 | 81,559 |
+
+Treat these as shape, not truth: still one run each, no warm-up.
+
+## Next: Phase 1.3 — throughput vs latency modes
+
+Right now one loop measures both. Phase 1.3 separates them:
+
+- **throughput mode:** time the whole stream, report commands/sec,
+- **latency mode:** time each command, report percentiles,
+
+and reports them independently. Phase 1.4 then adds a warm-up phase and fixes
+the bookkeeping so the sample does not include `latencies.push_back`.
+

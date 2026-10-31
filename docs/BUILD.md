@@ -69,13 +69,15 @@ and their output.
 ```powershell
 .\build\windows-release\Release\fluxmatch_demo.exe
 .\build\windows-release\Release\fluxmatch_bench.exe
+.\build\windows-release\Release\fluxmatch_bench.exe --workload mixed --commands 200000 --seed 42
 ```
 
 `fluxmatch_demo` is a small deterministic matching example. `fluxmatch_bench`
-is the development benchmark; its output is not a production latency claim. The
-current workload and measurement method are intentionally unchanged from the
-original implementation so later changes can be compared against a known
-baseline. See `docs/PHASE1.md`.
+runs one of five fixed-seed workloads: `resting`, `one_level_fill`,
+`multi_level_sweep`, `cancel`, `mixed`. The same workload, command count, and
+seed always produce the same stream; the printed `Stream hash` is the quick
+check. Its output is not a production latency claim: there is no warm-up and
+the current statistics are single-run. See `docs/PHASE1.md`.
 
 ### Troubleshooting
 
