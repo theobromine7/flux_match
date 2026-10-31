@@ -12,7 +12,7 @@
 #include "workloads.hpp"
 
 // Temporary portability shim. Phase 1.8 replaces this with a documented
-// timer module and measures its overhead.
+// timer module and measures its overhead in detail.
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
 #include <intrin.h>
 #define FLUXMATCH_HAS_RDTSCP 1
@@ -25,17 +25,29 @@
 namespace
 {
 
+#ifdef FLUXMATCH_HAS_RDTSCP
+constexpr const char *kTimerUnit = "cycles";
+#else
+constexpr const char *kTimerUnit = "ticks";
+#endif
+
 unsigned long long readTSC()
 {
 #ifdef FLUXMATCH_HAS_RDTSCP
     unsigned int aux;
     return __rdtscp(&aux);
 #else
-    // Non-x86 fallback: monotonic clock ticks, not CPU cycles.
     return static_cast<unsigned long long>(
         std::chrono::steady_clock::now().time_since_epoch().count());
 #endif
 }
+
+enum class Mode
+{
+    Throughput,
+    Latency,
+    Both
+};
 
 struct Options
 {
@@ -43,6 +55,7 @@ struct Options
         fluxmatch::bench::WorkloadKind::OneLevelFill;
     std::size_t commands = 1000000;
     std::uint64_t seed = 42;
+    Mode mode = Mode::Both;
     bool help = false;
 };
 
@@ -54,7 +67,19 @@ void printUsage(const char *program)
         << " (default: one_level_fill)\n"
         << "  --commands <n>      number of commands to generate (default: 1000000)\n"
         << "  --seed <n>          RNG seed (default: 42)\n"
+        << "  --mode <mode>       throughput, latency, or both (default: both)\n"
         << "  --help              show this message\n";
+}
+
+std::optional<Mode> parseMode(const std::string &value)
+{
+    if (value == "throughput")
+        return Mode::Throughput;
+    if (value == "latency")
+        return Mode::Latency;
+    if (value == "both")
+        return Mode::Both;
+    return std::nullopt;
 }
 
 std::optional<Options> parseOptions(int argc, char **argv)
@@ -99,6 +124,16 @@ std::optional<Options> parseOptions(int argc, char **argv)
             {
                 options.seed = std::stoull(value);
             }
+            else if (arg == "--mode")
+            {
+                const auto parsed = parseMode(value);
+                if (!parsed)
+                {
+                    std::cerr << "Unknown mode: " << value << '\n';
+                    return std::nullopt;
+                }
+                options.mode = *parsed;
+            }
             else
             {
                 std::cerr << "Unknown option: " << arg << '\n';
@@ -113,6 +148,149 @@ std::optional<Options> parseOptions(int argc, char **argv)
     }
 
     return options;
+}
+
+// Throughput: one clock reading around the whole stream. No per-command timer,
+// so this number includes almost no measurement overhead.
+double runThroughput(const std::vector<fluxmatch::bench::Command> &commands,
+                     std::size_t &trades)
+{
+    MatchingEngine engine;
+    std::vector<long long> orderIds(commands.size(), 0);
+
+    const auto start = std::chrono::steady_clock::now();
+    for (std::size_t i = 0; i < commands.size(); ++i)
+    {
+        const auto &command = commands[i];
+        if (command.kind == fluxmatch::bench::CommandKind::Submit)
+        {
+            orderIds[i] = engine.submitOrder(
+                command.price, command.quantity, command.side, command.orderType);
+        }
+        else
+        {
+            engine.cancelOrder(orderIds[command.cancelTarget]);
+        }
+    }
+    const auto end = std::chrono::steady_clock::now();
+
+    trades = engine.getTrades().size();
+    const auto ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+    return static_cast<double>(ns) / 1e9;
+}
+
+// Engine-only latency: argument preparation (reading the command, resolving a
+// cancel target) happens before the timer starts.
+std::vector<unsigned long long> runLatencyEngineOnly(
+    const std::vector<fluxmatch::bench::Command> &commands,
+    std::size_t &trades)
+{
+    MatchingEngine engine;
+    std::vector<long long> orderIds(commands.size(), 0);
+    std::vector<unsigned long long> latencies;
+    latencies.reserve(commands.size());
+
+    for (std::size_t i = 0; i < commands.size(); ++i)
+    {
+        const auto &command = commands[i];
+
+        if (command.kind == fluxmatch::bench::CommandKind::Submit)
+        {
+            const long long price = command.price;
+            const long long quantity = command.quantity;
+            const Side side = command.side;
+            const OrderType orderType = command.orderType;
+
+            const auto start = readTSC();
+            const long long id = engine.submitOrder(price, quantity, side, orderType);
+            const auto end = readTSC();
+
+            orderIds[i] = id;
+            latencies.push_back(end - start);
+        }
+        else
+        {
+            const long long targetId = orderIds[command.cancelTarget];
+
+            const auto start = readTSC();
+            engine.cancelOrder(targetId);
+            const auto end = readTSC();
+
+            latencies.push_back(end - start);
+        }
+    }
+
+    trades = engine.getTrades().size();
+    return latencies;
+}
+
+// End-to-end latency: the timer includes the command dispatch and cancel-target
+// lookup, so it is closer to what a caller of the engine actually pays.
+std::vector<unsigned long long> runLatencyEndToEnd(
+    const std::vector<fluxmatch::bench::Command> &commands,
+    std::size_t &trades)
+{
+    MatchingEngine engine;
+    std::vector<long long> orderIds(commands.size(), 0);
+    std::vector<unsigned long long> latencies;
+    latencies.reserve(commands.size());
+
+    for (std::size_t i = 0; i < commands.size(); ++i)
+    {
+        const auto &command = commands[i];
+
+        const auto start = readTSC();
+        long long id = 0;
+        if (command.kind == fluxmatch::bench::CommandKind::Submit)
+        {
+            id = engine.submitOrder(
+                command.price, command.quantity, command.side, command.orderType);
+        }
+        else
+        {
+            engine.cancelOrder(orderIds[command.cancelTarget]);
+        }
+        const auto end = readTSC();
+
+        if (command.kind == fluxmatch::bench::CommandKind::Submit)
+            orderIds[i] = id;
+        latencies.push_back(end - start);
+    }
+
+    trades = engine.getTrades().size();
+    return latencies;
+}
+
+// Lower bound on timer cost: two consecutive readings with nothing between.
+std::vector<unsigned long long> measureTimerOverhead(std::size_t samples)
+{
+    std::vector<unsigned long long> overhead;
+    overhead.reserve(samples);
+    for (std::size_t i = 0; i < samples; ++i)
+    {
+        const auto start = readTSC();
+        const auto end = readTSC();
+        overhead.push_back(end - start);
+    }
+    return overhead;
+}
+
+unsigned long long printStats(const char *label,
+                              std::vector<unsigned long long> &values)
+{
+    if (values.empty())
+        return 0;
+
+    std::sort(values.begin(), values.end());
+    const std::size_t n = values.size();
+
+    std::cout << "  " << label << ":\n";
+    std::cout << "    P50: " << values[n / 2] << ' ' << kTimerUnit << '\n';
+    std::cout << "    P95: " << values[n * 95 / 100] << ' ' << kTimerUnit << '\n';
+    std::cout << "    P99: " << values[n * 99 / 100] << ' ' << kTimerUnit << '\n';
+    std::cout << "    Max: " << values[n - 1] << ' ' << kTimerUnit << '\n';
+    return values[n / 2];
 }
 
 } // namespace
@@ -142,55 +320,51 @@ int main(int argc, char **argv)
     std::cout << "Stream hash: " << std::hex
               << fluxmatch::bench::hashCommands(commands) << std::dec << '\n';
 
-    MatchingEngine engine;
-    std::vector<long long> orderIds(commands.size(), 0);
-    std::vector<unsigned long long> latencies;
-    latencies.reserve(commands.size());
-
-    const auto wallStart = std::chrono::steady_clock::now();
-
-    for (std::size_t i = 0; i < commands.size(); ++i)
+    if (options.mode == Mode::Throughput || options.mode == Mode::Both)
     {
-        const auto &command = commands[i];
-        const auto start = readTSC();
+        std::size_t trades = 0;
+        const double seconds = runThroughput(commands, trades);
 
-        if (command.kind == fluxmatch::bench::CommandKind::Submit)
-        {
-            orderIds[i] = engine.submitOrder(
-                command.price, command.quantity, command.side, command.orderType);
-        }
+        std::cout << "\n[throughput]\n";
+        std::cout << "  Time: " << seconds << " s\n";
+        if (seconds > 0.0)
+            std::cout << "  Commands/sec: "
+                      << static_cast<double>(commands.size()) / seconds << '\n';
         else
-        {
-            engine.cancelOrder(orderIds[command.cancelTarget]);
-        }
-
-        const auto end = readTSC();
-        latencies.push_back(end - start);
+            std::cout << "  Commands/sec: n/a\n";
+        std::cout << "  Trades: " << trades << '\n';
     }
 
-    const auto wallEnd = std::chrono::steady_clock::now();
-    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        wallEnd - wallStart)
-                        .count();
-    const double seconds = static_cast<double>(ns) / 1e9;
-
-    std::cout << "Time: " << seconds << " s\n";
-    if (seconds > 0.0)
-        std::cout << "Commands/sec: " << static_cast<double>(commands.size()) / seconds << '\n';
-    else
-        std::cout << "Commands/sec: n/a\n";
-
-    std::cout << "Trades: " << engine.getTrades().size() << '\n';
-    std::cout << "Trade capacity: " << engine.getTradeCapacity() << '\n';
-
-    if (!latencies.empty())
+    if (options.mode == Mode::Latency || options.mode == Mode::Both)
     {
-        std::sort(latencies.begin(), latencies.end());
-        const std::size_t n = latencies.size();
-        std::cout << "P50: " << latencies[n / 2] << " cycles\n";
-        std::cout << "P95: " << latencies[n * 95 / 100] << " cycles\n";
-        std::cout << "P99: " << latencies[n * 99 / 100] << " cycles\n";
-        std::cout << "Max: " << latencies[n - 1] << " cycles\n";
+        std::size_t engineTrades = 0;
+        std::size_t endToEndTrades = 0;
+
+        auto engineLatencies = runLatencyEngineOnly(commands, engineTrades);
+        auto endToEndLatencies = runLatencyEndToEnd(commands, endToEndTrades);
+
+        std::cout << "\n[latency: engine only]\n";
+        std::cout << "  Trades: " << engineTrades << '\n';
+        const auto engineMedian = printStats("latency", engineLatencies);
+
+        std::cout << "\n[latency: end to end]\n";
+        std::cout << "  Trades: " << endToEndTrades << '\n';
+        const auto endToEndMedian = printStats("latency", endToEndLatencies);
+
+        auto overhead = measureTimerOverhead(100000);
+        std::cout << "\n[timer]\n";
+        const auto overheadMedian = printStats("empty timed region", overhead);
+
+        std::cout << "\n[harness overhead estimate]\n";
+        const long long delta =
+            static_cast<long long>(endToEndMedian) -
+            static_cast<long long>(engineMedian);
+        std::cout << "  End-to-end P50 minus engine-only P50: "
+                  << delta << ' ' << kTimerUnit << '\n';
+        std::cout << "  Timer floor P50 (two back-to-back readings): "
+                  << overheadMedian << ' ' << kTimerUnit << '\n';
+        std::cout << "  Note: this difference is not trustworthy until warm-up\n"
+                     "  and repeat runs are added (Phase 1.4 and 1.6).\n";
     }
 
     return 0;

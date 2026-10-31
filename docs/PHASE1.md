@@ -147,13 +147,66 @@ produced enum redefinitions. Fixed.
 
 Treat these as shape, not truth: still one run each, no warm-up.
 
-## Next: Phase 1.3 — throughput vs latency modes
+## Phase 1.3 — throughput vs latency (done)
 
-Right now one loop measures both. Phase 1.3 separates them:
+The benchmark now has three modes:
 
-- **throughput mode:** time the whole stream, report commands/sec,
-- **latency mode:** time each command, report percentiles,
+```powershell
+.\build\windows-release\Release\fluxmatch_bench.exe --workload mixed --commands 200000 --seed 42 --mode both
+```
 
-and reports them independently. Phase 1.4 then adds a warm-up phase and fixes
-the bookkeeping so the sample does not include `latencies.push_back`.
+- `--mode throughput` times the whole stream once. Almost no measurement overhead.
+- `--mode latency` times each command and reports percentiles.
+- `--mode both` runs both, each against a **fresh engine**.
+
+Latency is reported twice:
+
+| Scope | Timer starts | Timer ends |
+| --- | --- | --- |
+| `engine only` | after the command is decoded and the cancel target resolved | immediately after the engine call |
+| `end to end` | before the command branch | after the engine call |
+
+The first is "the item". The second is "the item plus the box".
+
+### Finding: the comparison is currently invalid
+
+Three runs of `mixed`, 200,000 commands:
+
+| Run | Throughput | Engine P50 | End-to-end P50 | Delta | Timer floor P50 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 3.87 M/s | 566 | 552 | −14 | 32 |
+| 2 | 2.29 M/s | 636 | 622 | −14 | 30 |
+| 3 | 2.17 M/s | 634 | 574 | −60 | 32 |
+
+The end-to-end number is **lower** than engine-only, which should be impossible:
+it does strictly more work inside the timer. The cause is pass order. The
+engine-only pass always runs first and warms the code, caches, allocator, and
+branch predictor; the end-to-end pass then benefits. The warming effect is
+larger than the dispatch cost we are trying to measure.
+
+This is why the benchmark prints a warning next to the delta. Phase 1.4 adds a
+warm-up phase before each measured pass, and Phase 1.6 repeats runs. Only then
+will a positive delta mean anything.
+
+### Two other observations
+
+- **Timer floor ≈ 30–32 cycles.** Two back-to-back `RDTSCP` readings cost that
+  much. Every per-command number already contains this floor. For an operation
+  around 600 cycles, the timer is roughly 5% of the reported value.
+- **Throughput fell from 3.87 M/s to 2.17 M/s across runs** with identical input.
+  Frequency scaling, thermals, or background load. A single throughput number is
+  not a measurement; this is Phase 1.6's job.
+
+Files: `docs/experiments/004-modes.txt`, record `003-throughput-vs-latency.md`.
+
+## Next: Phase 1.4 — warm-up and honest statistics
+
+1. Add a warm-up phase before every measured pass, using the same workload but a
+   throwaway engine.
+2. Keep bookkeeping (`latencies.push_back`, id assignment) outside the timed
+   region for the engine-only case.
+3. Re-measure: the end-to-end delta should become positive and stable.
+4. Decide how much warm-up is enough: hours, commands, or until the median
+   stops drifting.
+
 

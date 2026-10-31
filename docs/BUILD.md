@@ -76,8 +76,12 @@ and their output.
 runs one of five fixed-seed workloads: `resting`, `one_level_fill`,
 `multi_level_sweep`, `cancel`, `mixed`. The same workload, command count, and
 seed always produce the same stream; the printed `Stream hash` is the quick
-check. Its output is not a production latency claim: there is no warm-up and
-the current statistics are single-run. See `docs/PHASE1.md`.
+check.
+
+`--mode throughput` times the whole stream, `--mode latency` times each command
+(engine-only and end-to-end), and `--mode both` does both against a fresh
+engine. There is no warm-up yet, so small differences are noise; see
+`docs/PHASE1.md`.
 
 ### Troubleshooting
 
