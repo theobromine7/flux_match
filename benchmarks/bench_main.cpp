@@ -56,6 +56,7 @@ struct Options
     std::size_t commands = 1000000;
     std::uint64_t seed = 42;
     Mode mode = Mode::Both;
+    double warmupSeconds = 1.0;
     bool help = false;
 };
 
@@ -68,6 +69,7 @@ void printUsage(const char *program)
         << "  --commands <n>      number of commands to generate (default: 1000000)\n"
         << "  --seed <n>          RNG seed (default: 42)\n"
         << "  --mode <mode>       throughput, latency, or both (default: both)\n"
+        << "  --warmup <seconds>  minimum warm-up duration, 0 disables (default: 1.0)\n"
         << "  --help              show this message\n";
 }
 
@@ -134,6 +136,15 @@ std::optional<Options> parseOptions(int argc, char **argv)
                 }
                 options.mode = *parsed;
             }
+            else if (arg == "--warmup")
+            {
+                options.warmupSeconds = std::stod(value);
+                if (options.warmupSeconds < 0.0)
+                {
+                    std::cerr << "Warm-up must not be negative\n";
+                    return std::nullopt;
+                }
+            }
             else
             {
                 std::cerr << "Unknown option: " << arg << '\n';
@@ -178,6 +189,72 @@ double runThroughput(const std::vector<fluxmatch::bench::Command> &commands,
     const auto ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     return static_cast<double>(ns) / 1e9;
+}
+
+// Warm-up runs the stream repeatedly on throwaway engines. It stops when the
+// minimum duration has passed AND the last three pass throughputs are within
+// 5% of each other, or when a hard safety limit is reached.
+struct WarmUpResult
+{
+    std::size_t passes = 0;
+    double seconds = 0.0;
+    double firstThroughput = 0.0;
+    double lastThroughput = 0.0;
+    double recentSpread = 0.0;
+    bool steady = false;
+};
+
+WarmUpResult runWarmUp(const std::vector<fluxmatch::bench::Command> &commands,
+                       double minSeconds)
+{
+    WarmUpResult result;
+    if (minSeconds <= 0.0 || commands.empty())
+        return result;
+
+    constexpr double kTolerance = 0.05;
+    constexpr double kMaxSeconds = 10.0;
+    constexpr std::size_t kMaxPasses = 1000;
+
+    const auto start = std::chrono::steady_clock::now();
+    std::vector<double> recent;
+
+    while (true)
+    {
+        std::size_t trades = 0;
+        const double seconds = runThroughput(commands, trades);
+        const double throughput =
+            seconds > 0.0 ? static_cast<double>(commands.size()) / seconds : 0.0;
+
+        if (result.passes == 0)
+            result.firstThroughput = throughput;
+        result.lastThroughput = throughput;
+        ++result.passes;
+
+        recent.push_back(throughput);
+        if (recent.size() > 3)
+            recent.erase(recent.begin());
+
+        result.seconds = std::chrono::duration<double>(
+                             std::chrono::steady_clock::now() - start)
+                             .count();
+
+        if (recent.size() == 3)
+        {
+            double sorted[3] = {recent[0], recent[1], recent[2]};
+            std::sort(sorted, sorted + 3);
+            const double median = sorted[1];
+            result.recentSpread =
+                median > 0.0 ? (sorted[2] - sorted[0]) / median : 0.0;
+            result.steady = result.recentSpread <= kTolerance;
+        }
+
+        if (result.seconds >= minSeconds && result.steady)
+            break;
+        if (result.seconds >= kMaxSeconds || result.passes >= kMaxPasses)
+            break;
+    }
+
+    return result;
 }
 
 // Engine-only latency: argument preparation (reading the command, resolving a
@@ -320,6 +397,23 @@ int main(int argc, char **argv)
     std::cout << "Stream hash: " << std::hex
               << fluxmatch::bench::hashCommands(commands) << std::dec << '\n';
 
+    std::cout << "\n[warm-up]\n";
+    if (options.warmupSeconds > 0.0 && !commands.empty())
+    {
+        const auto warm = runWarmUp(commands, options.warmupSeconds);
+        std::cout << "  passes: " << warm.passes << '\n';
+        std::cout << "  time: " << warm.seconds << " s\n";
+        std::cout << "  first pass: " << warm.firstThroughput << " commands/sec\n";
+        std::cout << "  last pass: " << warm.lastThroughput << " commands/sec\n";
+        std::cout << "  last-3 spread: " << warm.recentSpread * 100.0
+                  << " % (target <= 5 %)\n";
+        std::cout << "  status: " << (warm.steady ? "steady" : "not steady") << '\n';
+    }
+    else
+    {
+        std::cout << "  disabled\n";
+    }
+
     if (options.mode == Mode::Throughput || options.mode == Mode::Both)
     {
         std::size_t trades = 0;
@@ -363,8 +457,8 @@ int main(int argc, char **argv)
                   << delta << ' ' << kTimerUnit << '\n';
         std::cout << "  Timer floor P50 (two back-to-back readings): "
                   << overheadMedian << ' ' << kTimerUnit << '\n';
-        std::cout << "  Note: this difference is not trustworthy until warm-up\n"
-                     "  and repeat runs are added (Phase 1.4 and 1.6).\n";
+        std::cout << "  Note: single run. Repeat-run variability is added in\n"
+                     "  Phase 1.6.\n";
     }
 
     return 0;

@@ -80,8 +80,8 @@ check.
 
 `--mode throughput` times the whole stream, `--mode latency` times each command
 (engine-only and end-to-end), and `--mode both` does both against a fresh
-engine. There is no warm-up yet, so small differences are noise; see
-`docs/PHASE1.md`.
+engine. `--warmup <seconds>` (default 1.0) runs discarded warm-up passes first.
+Results are still single-run; see `docs/PHASE1.md`.
 
 ### Troubleshooting
 

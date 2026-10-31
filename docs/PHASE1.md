@@ -199,14 +199,58 @@ will a positive delta mean anything.
 
 Files: `docs/experiments/004-modes.txt`, record `003-throughput-vs-latency.md`.
 
-## Next: Phase 1.4 — warm-up and honest statistics
+## Phase 1.4 — warm-up (done)
 
-1. Add a warm-up phase before every measured pass, using the same workload but a
-   throwaway engine.
-2. Keep bookkeeping (`latencies.push_back`, id assignment) outside the timed
-   region for the engine-only case.
-3. Re-measure: the end-to-end delta should become positive and stable.
-4. Decide how much warm-up is enough: hours, commands, or until the median
-   stops drifting.
+`--warmup <seconds>` (default 1.0, `0` disables) runs the stream repeatedly on
+**throwaway engines** before any measurement. It stops when:
+
+- at least the requested time has passed, **and**
+- the last three warm-up passes are within 5% of each other,
+
+or after 10 seconds / 1,000 passes, whichever comes first.
+
+Why a throwaway engine: warming up on the measured engine would leave the book
+full of orders, so the measured run would no longer be the workload we intended.
+
+### Results (mixed, 200,000 commands, seed 42)
+
+| Run | Warm-up passes | Warm-up time | First pass | Last pass | Delta (E2E − engine) | Timer floor |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 16 | 1.14 s | 2.18 M/s | 3.78 M/s | −34 | 30 |
+| 2 | 32 | 2.76 s | 3.93 M/s | 3.16 M/s | +14 | 30 |
+| 3 | 25 | 1.79 s | 3.98 M/s | 3.35 M/s | +16 | 30 |
+
+### What the warm-up exposed
+
+- **The first pass is much slower.** Run 1 went from 2.18 M/s to 3.78 M/s. That
+  is the CPU power/frequency ramp, and it is why a fixed *time* floor is the
+  right unit.
+- **"Steady" is not "fast".** Runs 2 and 3 ended slower than they started, most
+  likely thermal throttling on a 2-core laptop. Warm-up gets you to a stable
+  state, not necessarily the fastest one.
+- **The harness delta is roughly the size of the timer floor.** One run is
+  negative, two are +14 and +16, while the clock itself costs 30 cycles. So the
+  harness overhead is at or below our resolution. We cannot claim a precise
+  number until repeat runs exist (1.6).
+
+The stopping rule also explains why warm-up time varies: the benchmark keeps
+going until the numbers settle, not until the clock says one second.
+
+Files: `docs/experiments/005-warmup.txt`,
+record `004-warmup.md`.
+
+## Next: Phase 1.5 — metadata and machine-readable output
+
+Every result should carry the facts needed to interpret it:
+
+- workload, commands, seed, mode, warm-up seconds,
+- build type and compiler, C++ flags,
+- CPU and OS,
+- date/time and duration.
+
+Then write the same result as JSON (and later CSV) under
+`benchmarks/results/`, which is gitignored. Phase 1.6 adds repeated runs and a
+min/median/stddev summary across runs.
+
 
 
