@@ -72,6 +72,18 @@ target_compile_definitions(fluxmatch_bench PRIVATE
     FLUXMATCH_BUILD_CONFIG="$<CONFIG>"
 )
 
+# Counts engine allocations per command. The global operator new replacement is
+# confined to this executable and is never linked into the engine or the
+# normal benchmark.
+add_executable(fluxmatch_alloc_bench
+    benchmarks/alloc_main.cpp
+    benchmarks/allocation_tracker.cpp
+)
+
+target_link_libraries(fluxmatch_alloc_bench PRIVATE
+    fluxmatch_workloads
+)
+
 option(FLUXMATCH_BUILD_MARKET_DATA "Build the market-data client" ON)
 
 if(FLUXMATCH_BUILD_MARKET_DATA)

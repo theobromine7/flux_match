@@ -24,3 +24,8 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+      - name: Allocation baseline
+        run: |
+          ./build/fluxmatch_alloc_bench --workload resting --commands 50000 --seed 42
+          ./build/fluxmatch_alloc_bench --workload mixed --commands 50000 --seed 42

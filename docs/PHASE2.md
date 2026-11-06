@@ -90,16 +90,56 @@ mismatch was found in 30,000 randomized operations.
 Every later optimization must keep these tests green. That turns "it feels
 faster" into "it is faster and still correct".
 
-## Next: Phase 2.6 and 2.7 — measure before changing
+## Phase 2.6 — baseline before changing anything (done)
 
-1. Record a baseline for the fixed workloads **before** touching data structures.
-2. Count allocations per operation.
-3. Only then try one candidate change at a time (2.8), rerunning the same tests
-   and benchmarks.
+Five runs per workload, 200,000 commands, seed 42, throughput mode, 1.0 s
+minimum warm-up:
 
-The candidate changes, in order of expected value:
+| Workload | Median (commands/s) | Range |
+| --- | --- | --- |
+| resting | 7,343,110 | 6.67–7.51 M/s |
+| one_level_fill | 10,853,000 | 9.38–11.48 M/s |
+| multi_level_sweep | 9,397,170 | 9.00–9.58 M/s |
+| cancel | 6,011,980 | 5.55–6.27 M/s |
+| mixed | 4,992,420 | 4.39–6.12 M/s |
 
-- price-level lookup,
-- order lookup and storage,
-- per-level queue layout,
-- pool allocator, only if allocation counting shows it matters.
+Run-to-run spread is 6–39%, so a change must move the median, not one run.
+Raw data: `docs/experiments/008-baseline-throughput.txt`.
+
+## Phase 2.7 — allocation counting (done)
+
+`fluxmatch_alloc_bench` replaces global `operator new` in a separate executable.
+It resets counters around each command and reports allocations, bytes, and a
+histogram.
+
+| Workload | Allocations/command | Zero-allocation commands |
+| --- | --- | --- |
+| resting | 1.0003 | 0% |
+| one_level_fill | 1.0001 | 0% |
+| multi_level_sweep | 1.0001 | 0% |
+| cancel | 0.7503 | 25% |
+| mixed | 0.7996 | 20.1% |
+
+**Every submit allocates once; every cancel allocates zero times.** On this
+MSVC build the allocation comes from the `std::deque<OrderEntry>` order store,
+not from matching or cancelling. Price-level storage accounts for only the rare
+2–3 allocation commands.
+
+This changes the priority for Phase 2.8: order storage is the first candidate,
+not price-level lookup.
+
+Raw data: `docs/experiments/007-allocations.txt`.
+
+## Next: Phase 2.8 — one change at a time
+
+First candidate: **order storage**. Keep the same public behavior and tests, but
+replace the per-order allocation with a pool or chunked storage. Then:
+
+1. Re-run all correctness tests (edge cases, differential, invariants).
+2. Re-run the 5-run baseline.
+3. Report allocations per command and throughput medians.
+4. Keep the change only if it improves the median beyond the run-to-run spread.
+
+Only after that should we try price-level lookup, queue layout, or the trade
+log.
+

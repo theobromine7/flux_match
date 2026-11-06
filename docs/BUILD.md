@@ -58,11 +58,13 @@ preset; `CMAKE_BUILD_TYPE` is not used. Executables are under
 
 - `fluxmatch_demo.exe`
 - `fluxmatch_bench.exe`
+- `fluxmatch_alloc_bench.exe`
 - `fluxmatch_marketdata.exe`
 - `fluxmatch_tests.exe`
+- `fluxmatch_model_tests.exe`
 
-CTest runs `fluxmatch_tests`; `ctest --preset windows-release` shows failures
-and their output.
+CTest runs the regression, workload, and model tests; `ctest --preset
+windows-release` shows failures and their output.
 
 ### Running the demo and benchmark
 
@@ -87,6 +89,16 @@ compiler, build type, CPU, OS, workload seed, and stream hash. The directory is
 created if needed. `benchmarks/results/` is gitignored; keep reruns out of the
 repository and copy only the results worth discussing. Results are still
 single-run; see `docs/PHASE1.md`.
+
+To count allocations per command:
+
+```powershell
+.\build\windows-release\Release\fluxmatch_alloc_bench.exe --workload mixed --commands 200000 --seed 42
+```
+
+It reports allocations and bytes per command, a histogram, and separate submit
+and cancel statistics. Allocation tracking is isolated in that executable and
+does not affect the engine or the normal benchmark.
 
 ### Troubleshooting
 

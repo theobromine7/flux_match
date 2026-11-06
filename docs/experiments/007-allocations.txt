@@ -1,0 +1,161 @@
+# Allocation baseline
+# commit: 763cb9d
+# compiler: MSVC 19.44.35228.0
+# commands: 200000, seed: 42
+
+Workload: resting
+Seed: 42
+Commands: 200000
+Stream hash: 2dcc3b839b8cf130
+Trades: 0
+
+[allocation summary]
+  total allocations: 200052
+  total bytes: 18748764
+  allocations/command: 1.00026
+  bytes/command: 93.7438
+  zero-allocation commands: 0 %
+  max allocations in one command: 3
+
+[allocation histogram]
+  1: 199951
+  2: 46
+  3: 3
+
+[by command kind]
+  submit:
+    operations: 200000
+    allocations: 200052
+    allocations/op: 1.00026
+    bytes: 18748764
+    zero-allocation ops: 0 %
+    max allocations in one op: 3
+
+Workload: one_level_fill
+Seed: 42
+Commands: 200000
+Stream hash: 5bae424bad664543
+Trades: 100000
+
+[allocation summary]
+  total allocations: 200018
+  total bytes: 18594678
+  allocations/command: 1.00009
+  bytes/command: 92.9734
+  zero-allocation commands: 0 %
+  max allocations in one command: 3
+
+[allocation histogram]
+  1: 199983
+  2: 16
+  3: 1
+
+[by command kind]
+  submit:
+    operations: 200000
+    allocations: 200018
+    allocations/op: 1.00009
+    bytes: 18594678
+    zero-allocation ops: 0 %
+    max allocations in one op: 3
+
+Workload: multi_level_sweep
+Seed: 42
+Commands: 200000
+Stream hash: 8337df997cb94a60
+Trades: 181810
+
+[allocation summary]
+  total allocations: 200024
+  total bytes: 18595566
+  allocations/command: 1.00012
+  bytes/command: 92.9778
+  zero-allocation commands: 0 %
+  max allocations in one command: 3
+
+[allocation histogram]
+  1: 199977
+  2: 22
+  3: 1
+
+[by command kind]
+  submit:
+    operations: 200000
+    allocations: 200024
+    allocations/op: 1.00012
+    bytes: 18595566
+    zero-allocation ops: 0 %
+    max allocations in one op: 3
+
+Workload: cancel
+Seed: 42
+Commands: 200000
+Stream hash: 38abd3c4b7abdd6f
+Trades: 0
+
+[allocation summary]
+  total allocations: 150052
+  total bytes: 15148764
+  allocations/command: 0.75026
+  bytes/command: 75.7438
+  zero-allocation commands: 25 %
+  max allocations in one command: 3
+
+[allocation histogram]
+  0: 50000
+  1: 149951
+  2: 46
+  3: 3
+
+[by command kind]
+  submit:
+    operations: 150000
+    allocations: 150052
+    allocations/op: 1.00035
+    bytes: 15148764
+    zero-allocation ops: 0 %
+    max allocations in one op: 3
+  cancel:
+    operations: 50000
+    allocations: 0
+    allocations/op: 0
+    bytes: 0
+    zero-allocation ops: 100 %
+    max allocations in one op: 0
+
+Workload: mixed
+Seed: 42
+Commands: 200000
+Stream hash: a63351e7e27de08b
+Trades: 81559
+
+[allocation summary]
+  total allocations: 159912
+  total bytes: 15858684
+  allocations/command: 0.79956
+  bytes/command: 79.2934
+  zero-allocation commands: 20.07 %
+  max allocations in one command: 3
+
+[allocation histogram]
+  0: 40140
+  1: 159809
+  2: 50
+  3: 1
+
+[by command kind]
+  submit:
+    operations: 159860
+    allocations: 159912
+    allocations/op: 1.00033
+    bytes: 15858684
+    zero-allocation ops: 0 %
+    max allocations in one op: 3
+  cancel:
+    operations: 40140
+    allocations: 0
+    allocations/op: 0
+    bytes: 0
+    zero-allocation ops: 100 %
+    max allocations in one op: 0
+
