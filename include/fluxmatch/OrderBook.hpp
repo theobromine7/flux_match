@@ -1,5 +1,6 @@
 #pragma once
 #include <deque>
+#include <string>
 #include <vector>
 #include <optional>
 #include <fluxmatch/Order.hpp>
@@ -13,8 +14,14 @@ public:
     std::optional<long long> getBestBuy() const;
     std::optional<long long> getBestSell() const;
     Order *getOrder(long long orderId);
+    const Order *getOrder(long long orderId) const;
     void removeFromBook(long long orderId);
     void printOrderBook() const;
+
+    // Validates the internal book structure and every order's lifecycle state.
+    // Returns true when the book satisfies docs/INVARIANTS.md; on failure,
+    // writes a human-readable reason to *error when error is not null.
+    bool checkInvariants(std::string *error = nullptr) const;
 
 private:
     struct PriceLevel

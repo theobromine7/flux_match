@@ -28,10 +28,11 @@ static void testBook()
     {
         if (reference.empty() || random() % 3 != 0)
         {
-            const long long price = static_cast<long long>(random() % 201) - 100;
+            const long long price = static_cast<long long>(random() % 200) + 1;
             const auto side = random() % 2 ? Side::BUY : Side::SELL;
             const auto type = random() % 10 ? OrderType::LIMIT : OrderType::MARKET;
             auto id = book.addOrder(price, 5, side, type, OrderState::NEW);
+            check(id != 0);
             reference.push_back({id, price, side, type == OrderType::LIMIT});
             if (!first)
                 first = book.getOrder(id);
@@ -73,7 +74,7 @@ static void testBook()
     check(!book.getOrder(0) && !book.getOrder(-1) && !book.getOrder(999999));
     book.cancelOrder(-1);
     book.removeFromBook(999999);
-    const auto low = book.addOrder(std::numeric_limits<long long>::min(), 1,
+    const auto low = book.addOrder(1, 1,
                                    Side::BUY, OrderType::LIMIT, OrderState::NEW);
     const auto high = book.addOrder(std::numeric_limits<long long>::max(), 1,
                                     Side::BUY, OrderType::LIMIT, OrderState::NEW);

@@ -116,4 +116,15 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME fluxmatch_workload_tests COMMAND fluxmatch_workload_tests)
+
+    add_executable(fluxmatch_model_tests
+        tests/DifferentialTests.cpp
+        tests/EdgeCaseTests.cpp
+    )
+
+    target_link_libraries(fluxmatch_model_tests PRIVATE
+        fluxmatch_core
+    )
+
+    add_test(NAME fluxmatch_model_tests COMMAND fluxmatch_model_tests)
 endif()
