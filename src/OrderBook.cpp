@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <new>
 #include <unordered_set>
 
 namespace
@@ -21,6 +22,59 @@ bool isActive(OrderState state)
 
 } // namespace
 
+OrderBook::OrderEntry &OrderBook::OrderPool::create(
+    long long price, long long quantity, Side side, OrderType type,
+    OrderState state)
+{
+    if (chunks.empty() || chunks.back().used == kChunkSize)
+    {
+        Chunk chunk;
+        chunk.storage = std::make_unique<std::byte[]>(sizeof(OrderEntry) * kChunkSize);
+        chunks.push_back(std::move(chunk));
+    }
+
+    auto &chunk = chunks.back();
+    void *address = chunk.storage.get() + chunk.used * sizeof(OrderEntry);
+    ++chunk.used;
+    ++count;
+
+    return *new (address) OrderEntry{
+        Order(static_cast<long long>(count), price, quantity, side, type, state)};
+}
+
+OrderBook::OrderEntry &OrderBook::OrderPool::at(std::size_t index)
+{
+    auto &chunk = chunks[index / kChunkSize];
+    void *address = chunk.storage.get() + (index % kChunkSize) * sizeof(OrderEntry);
+    return *std::launder(reinterpret_cast<OrderEntry *>(address));
+}
+
+const OrderBook::OrderEntry &OrderBook::OrderPool::at(std::size_t index) const
+{
+    const auto &chunk = chunks[index / kChunkSize];
+    const void *address =
+        chunk.storage.get() + (index % kChunkSize) * sizeof(OrderEntry);
+    return *std::launder(reinterpret_cast<const OrderEntry *>(address));
+}
+
+std::size_t OrderBook::OrderPool::size() const
+{
+    return count;
+}
+
+void OrderBook::OrderPool::discardLast()
+{
+    if (count == 0)
+        return;
+
+    --count;
+    auto &chunk = chunks.back();
+    --chunk.used;
+
+    void *address = chunk.storage.get() + chunk.used * sizeof(OrderEntry);
+    std::launder(reinterpret_cast<OrderEntry *>(address))->~OrderEntry();
+}
+
 std::vector<OrderBook::PriceLevel>::iterator OrderBook::findLevel(
     std::vector<PriceLevel> &levels, long long price)
 {
@@ -35,7 +89,7 @@ void OrderBook::printLevels(const std::vector<PriceLevel> &levels) const
         std::cout << "Price: " << level->price << " | ";
         for (long long id = level->head; id != 0;)
         {
-            const auto &entry = orders[static_cast<std::size_t>(id - 1)];
+            const auto &entry = orders.at(static_cast<std::size_t>(id - 1));
             std::cout << "[ID=" << id << ", Qty="
                       << entry.order.getRemainingQuantity() << "] ";
             id = entry.next;
@@ -62,7 +116,7 @@ long long OrderBook::addOrder(long long price, long long quantity, Side side,
         return 0;
 
     const auto id = static_cast<long long>(orders.size()) + 1;
-    orders.push_back(OrderEntry{Order(id, price, quantity, side, type, state)});
+    auto &entry = orders.create(price, quantity, side, type, state);
     if (type == OrderType::LIMIT)
     {
         auto &levels = side == Side::BUY ? buyOrders : sellOrders;
@@ -81,14 +135,13 @@ long long OrderBook::addOrder(long long price, long long quantity, Side side,
         }
         catch (...)
         {
-            orders.pop_back();
+            orders.discardLast();
             throw;
         }
-        auto &entry = orders.back();
         entry.previous = level->tail;
         entry.resting = true;
         if (level->tail != 0)
-            orders[static_cast<std::size_t>(level->tail - 1)].next = id;
+            orders.at(static_cast<std::size_t>(level->tail - 1)).next = id;
         else
             level->head = id;
         level->tail = id;
@@ -110,13 +163,13 @@ Order *OrderBook::getOrder(long long orderId)
 {
     if (orderId <= 0 || static_cast<unsigned long long>(orderId) > orders.size())
         return nullptr;
-    return &orders[static_cast<std::size_t>(orderId - 1)].order;
+    return &orders.at(static_cast<std::size_t>(orderId - 1)).order;
 }
 const Order *OrderBook::getOrder(long long orderId) const
 {
     if (orderId <= 0 || static_cast<unsigned long long>(orderId) > orders.size())
         return nullptr;
-    return &orders[static_cast<std::size_t>(orderId - 1)].order;
+    return &orders.at(static_cast<std::size_t>(orderId - 1)).order;
 }
 void OrderBook::cancelOrder(long long orderId)
 {
@@ -135,16 +188,16 @@ void OrderBook::cancelOrder(long long orderId)
 void OrderBook::removeFromBook(long long orderId)
 {
     if (!getOrder(orderId)) return;
-    auto &entry = orders[static_cast<std::size_t>(orderId - 1)];
+    auto &entry = orders.at(static_cast<std::size_t>(orderId - 1));
     if (!entry.resting) return;
     auto &levels = entry.order.getSide() == Side::BUY ? buyOrders : sellOrders;
     auto level = findLevel(levels, entry.order.getPrice());
     if (entry.previous != 0)
-        orders[static_cast<std::size_t>(entry.previous - 1)].next = entry.next;
+        orders.at(static_cast<std::size_t>(entry.previous - 1)).next = entry.next;
     else
         level->head = entry.next;
     if (entry.next != 0)
-        orders[static_cast<std::size_t>(entry.next - 1)].previous = entry.previous;
+        orders.at(static_cast<std::size_t>(entry.next - 1)).previous = entry.previous;
     else
         level->tail = entry.previous;
     entry.previous = entry.next = 0;
@@ -187,7 +240,7 @@ bool OrderBook::checkInvariants(std::string *error) const
                     return fail(error, std::string(sideName) +
                                           " order chain contains an invalid ID");
 
-                const auto &entry = orders[static_cast<std::size_t>(id - 1)];
+                const auto &entry = orders.at(static_cast<std::size_t>(id - 1));
 
                 if (!entry.resting)
                     return fail(error, std::string(sideName) +
@@ -237,7 +290,7 @@ bool OrderBook::checkInvariants(std::string *error) const
 
     for (std::size_t index = 0; index < orders.size(); ++index)
     {
-        const auto &entry = orders[index];
+        const auto &entry = orders.at(index);
         const auto &order = entry.order;
         const long long expectedId = static_cast<long long>(index) + 1;
 

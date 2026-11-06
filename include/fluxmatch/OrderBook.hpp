@@ -1,5 +1,6 @@
 #pragma once
-#include <deque>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 #include <optional>
@@ -37,12 +38,36 @@ private:
         long long next = 0;
         bool resting = false;
     };
+
+    // Chunked storage keeps Order* pointers stable while amortizing allocation:
+    // one heap allocation per chunk instead of one per order.
+    class OrderPool
+    {
+    public:
+        OrderEntry &create(long long price, long long quantity, Side side,
+                           OrderType type, OrderState state);
+        OrderEntry &at(std::size_t index);
+        const OrderEntry &at(std::size_t index) const;
+        std::size_t size() const;
+        void discardLast();
+
+    private:
+        static constexpr std::size_t kChunkSize = 4096;
+        struct Chunk
+        {
+            std::unique_ptr<std::byte[]> storage;
+            std::size_t used = 0;
+        };
+        std::vector<Chunk> chunks;
+        std::size_t count = 0;
+    };
+
     // Ascending prices. Creating/deleting levels shifts contiguous entries.
     std::vector<PriceLevel> buyOrders;
     std::vector<PriceLevel> sellOrders;
-    // Dense sequential IDs; block storage preserves pointers on insertion.
+    // Dense sequential IDs. Chunk storage preserves pointers on insertion.
     // Historical orders remain available, as in the original implementation.
-    std::deque<OrderEntry> orders;
+    OrderPool orders;
     static std::vector<PriceLevel>::iterator findLevel(
         std::vector<PriceLevel> &levels, long long price);
     void printLevels(const std::vector<PriceLevel> &levels) const;

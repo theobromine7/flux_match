@@ -142,5 +142,6 @@ A failure in the differential test is reproducible from its seed.
 | Cancel | `O(log L)` level search + `O(1)` unlink |
 | Look up an order by ID | `O(1)` |
 
-`L` is the number of distinct price levels on that side. These are the costs
-Phase 2.8 will measure before changing.
+`L` is the number of distinct price levels on that side. Order entries are stored
+in chunks of 4,096, so a submit does not normally allocate. These are the costs
+Phase 2.8 measures before changing.

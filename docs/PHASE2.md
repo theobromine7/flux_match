@@ -130,16 +130,37 @@ not price-level lookup.
 
 Raw data: `docs/experiments/007-allocations.txt`.
 
-## Next: Phase 2.8 — one change at a time
+## Phase 2.8 — first change: chunked order pool (done)
 
-First candidate: **order storage**. Keep the same public behavior and tests, but
-replace the per-order allocation with a pool or chunked storage. Then:
+The allocation count pointed at order storage, so that was the first change.
+`std::deque<OrderEntry>` became a chunked `OrderPool` (4,096 entries per chunk,
+placement-new, stable pointers). Nothing else changed.
 
-1. Re-run all correctness tests (edge cases, differential, invariants).
-2. Re-run the 5-run baseline.
-3. Report allocations per command and throughput medians.
-4. Keep the change only if it improves the median beyond the run-to-run spread.
+| Workload | Before median | After median | Change |
+| --- | --- | --- | --- |
+| resting | 7,343,110 | 11,091,100 | +51% |
+| one_level_fill | 10,853,000 | 23,275,800 | +115% |
+| multi_level_sweep | 9,397,170 | 14,898,200 | +59% |
+| cancel | 6,011,980 | 8,444,380 | +40% |
+| mixed | 4,992,420 | 7,980,970 | +60% |
 
-Only after that should we try price-level lookup, queue layout, or the trade
-log.
+Allocations per run fell from about 150,000–200,000 to 62–96. All correctness
+tests still pass, with unchanged stream hashes and trade counts.
+
+Record: `docs/experiments/009-order-pool.md`.
+
+## Next: Phase 2.8 — price-level lookup
+
+The remaining allocations come from price-level vector growth. The next single
+change is the price-level container: compare the current sorted `vector` (fast
+lookup, `O(L)` insert/erase) with a tree or flat-map design. The same rule
+applies: one change, all tests, five-run baseline, compare medians to spread.
+
+Later candidates, only if evidence supports them:
+
+- chunk size (1,024 / 4,096 / 16,384),
+- removing zero-initialization of new chunks,
+- per-level queue layout,
+- trade-log growth.
+
 
